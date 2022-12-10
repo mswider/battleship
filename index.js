@@ -55,14 +55,14 @@ const port = argv.port;
 const codeLength = argv.code;
 const timeout = argv.timeout;
 const webSecret = argv.secret || generatePassword();
-const webSecretEncoded = Buffer.from(`admin:${webSecret}`).toString('base64');
+const webSecretEncoded = `Basic ${Buffer.from(`admin:${webSecret}`).toString('base64')}`;
 const maxGames = 10 ** codeLength;
 
 function authenticate(req, res, next) {
     const b64auth = req.headers.authorization || '';
     if (safeCompare(b64auth, webSecretEncoded)) return next();
     res.set('WWW-Authenticate', 'Basic realm="battleship-admin"');
-    res.sendStatus(req.headers.authorization ? 403 : 401);
+    res.status(401).send(req.headers.authorization ? 'Forbidden' : 'Unauthorized');
 }
 
 const home = `
@@ -183,5 +183,19 @@ api.get('/info', (req, res) => {
     res.send(`User ID is: ${req.user.id}; Game ID: ${req.user.game}`);
 });
 
+const admin = express.Router();
+
+admin.get('/gamestate/:id', (req, res) => {
+    if (games.has(req.params.id)) {
+        res.json(games.get(req.params.id));
+    } else {
+        res.status(404).send('Game not found');
+    }
+});
+admin.get('/games', (req, res) => {
+    res.json([...games.keys()]);
+});
+
 app.use('/api/:id', api);
+app.use('/admin', authenticate, admin);
 app.listen(port, console.log(startMsg));
