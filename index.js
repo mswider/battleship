@@ -11,6 +11,26 @@ app.use(morgan('dev'));
 function log() {
     console.log(new Date().toLocaleString() + ' -', ...arguments);
 }
+function safeCompare(userInput, secret) {
+    const userInputLength = Buffer.byteLength(userInput);
+    const secretLength = Buffer.byteLength(secret);
+
+    const userInputBuffer = Buffer.alloc(userInputLength, 0, 'utf8');
+    userInputBuffer.write(userInput);
+    const secretBuffer = Buffer.alloc(userInputLength, 0, 'utf8');
+    secretBuffer.write(secret);
+
+    return !!(crypto.timingSafeEqual(userInputBuffer, secretBuffer) & userInputLength === secretLength);
+}
+function generatePassword() {
+    const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    const length = 12;
+    return [...Array(length)].map(_ => {
+        let umax = Math.pow(2, 32), r = new Uint32Array(1), max = umax - (umax % chars.length);
+        do { crypto.webcrypto.getRandomValues(r); } while(r[0] > max);
+        return chars[r[0] % chars.length];
+    }).join('');
+}
 
 const argv = yargs(hideBin(process.argv))
   .option('port', {
@@ -25,12 +45,25 @@ const argv = yargs(hideBin(process.argv))
     alias: 't',
     default: 90,
     describe: 'Deletes inactive games after this many seconds'
+  }).option('secret', {
+    alias: 's',
+    string: true,
+    describe: 'Sets the password for protected routes'
   }).argv;
 
 const port = argv.port;
 const codeLength = argv.code;
 const timeout = argv.timeout;
+const webSecret = argv.secret || generatePassword();
+const webSecretEncoded = Buffer.from(`admin:${webSecret}`).toString('base64');
 const maxGames = 10 ** codeLength;
+
+function authenticate(req, res, next) {
+    const b64auth = req.headers.authorization || '';
+    if (safeCompare(b64auth, webSecretEncoded)) return next();
+    res.set('WWW-Authenticate', 'Basic realm="battleship-admin"');
+    res.sendStatus(req.headers.authorization ? 403 : 401);
+}
 
 const home = `
 <!DOCTYPE html>
@@ -69,6 +102,7 @@ const startMsg = `
 
                             Game code length: ${codeLength}
                             Maximum ongoing games: ${maxGames.toLocaleString()}
+                            Security Code: ${webSecret}
 `;
 
 const games = new Map();
