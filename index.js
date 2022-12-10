@@ -112,6 +112,7 @@ class Game {
     id;
     lastPing;
     players;
+    mode;
 
     constructor(gameID) {
         this.id = gameID;
@@ -119,6 +120,8 @@ class Game {
 
         this.players = [...[,,]].map(_ => Game.generatePlayer());
         this.players.map(player => playerIndex.set(player, gameID));
+
+        this.mode = Game.modes.WAIT;
 
         log(`new game with id ${gameID}`);
     }
@@ -130,6 +133,13 @@ class Game {
         this.players.map(player => playerIndex.delete(player));
     }
 
+    static modes = {
+        WAIT:       1,
+        LAYOUT:     2,
+        PLAYER0:    3,
+        PLAYER1:    4,
+        END:        5
+    }
     static generateID(length) {
         return [...Array(length)].map(_ => Math.random() * 10 | 0).join('');
     }
@@ -159,10 +169,22 @@ app.post('/api/new', (req, res, next) => {
     }
 
     const game = new Game(gameID);
-    const [hostID] = game.players;
+    const [userID] = game.players;
     games.set(gameID, game);
 
-    res.json({ gameID, hostID });
+    res.json({ gameID, userID });
+});
+app.post('/api/join/:id', (req, res) => {
+    if (games.has(req.params.id) && games.get(req.params.id).mode == Game.modes.WAIT) {
+        const game = games.get(req.params.id)
+        const [_, userID] = game.players;
+        game.ping();
+        game.mode = Game.modes.LAYOUT;
+        log(`Player connected to game ${req.params.id}, game starting...`);
+        res.json({ userID });
+    } else {
+        res.status(404).send('Game not found');
+    }
 });
 
 const api = express.Router();
