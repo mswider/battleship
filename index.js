@@ -58,6 +58,14 @@ const webSecret = argv.secret || generatePassword();
 const webSecretEncoded = `Basic ${Buffer.from(`admin:${webSecret}`).toString('base64')}`;
 const maxGames = 10 ** codeLength;
 
+const ships = {
+    Carrier: 5,
+    Battleship: 4,
+    Destroyer: 3,
+    Submarine: 3,
+    'Patrol Boat': 2
+};
+
 function authenticate(req, res, next) {
     const b64auth = req.headers.authorization || '';
     if (safeCompare(b64auth, webSecretEncoded)) return next();
@@ -113,6 +121,8 @@ class Game {
     lastPing;
     players;
     mode;
+    boards;
+    shots;  // shots that each player took
 
     constructor(gameID) {
         this.id = gameID;
@@ -122,6 +132,9 @@ class Game {
         this.players.map(player => playerIndex.set(player, gameID));
 
         this.mode = Game.modes.WAIT;
+
+        this.boards = [...[,,]];
+        this.shots = [...[,,]].map(_ => [...Array(10)].map(_ => [...Array(10)]));
 
         log(`new game with id ${gameID}`);
     }
@@ -201,6 +214,70 @@ app.use('/api/:id', (req, res, next) => {
     }
 });
 
+api.get('/state', (req, res) => {
+    const game = games.get(req.user.game);
+    game.ping();
+    switch (game.mode) {
+        case Game.modes.WAIT:
+            return res.json({ mode: 'WAIT' });
+        case Game.modes.LAYOUT:
+            return res.json({ mode: 'LAYOUT', hasPlacedShips: !!game.boards[req.user.id] });
+        default:
+            return res.status(500).send('Error processing game state: mode not handled');
+    }
+});
+api.post('/ships', (req, res) => {
+    const game = games.get(req.user.game);
+    game.ping();
+    if (game.mode != Game.modes.LAYOUT) return res.status(400).send('The game is not in layout mode');
+    if (game.boards[req.user.id]) return res.status(400).send('You already set up your board');
+
+    const data = req.body;
+    const invalid = reason => res.status(400).send(`Invalid ship layout: ${reason}`);
+    // #1 - Is the data a 10x10 grid of ships?
+    const errJSON = 'The data sent is not a 10x10 grid of ships';
+    if (!Array.isArray(data)) return invalid(errJSON);
+    if (data.length != 10) return invalid(errJSON);
+    if (!data.every(e => Array.isArray(e))) return invalid(errJSON);
+    if (!data.every(e => e.length == 10)) return invalid(errJSON);
+    if (!data.every(e => e.every(k => typeof k == 'number' && Number.isInteger(k) && k >= 0 && k <= Object.keys(ships).length))) return invalid(errJSON);
+
+    // #2 - Gather ship coordinates
+    let coordinates = [...Array(Object.keys(ships).length)].map(_ => []);
+    for (const [y, arr] of data.entries()) {
+        for (const [x, type] of arr.entries()) {
+            if (type == 0) continue;
+            coordinates[type - 1].push([x, y]);
+        }
+    }
+    
+    // #3 - Validate each ship's coordinates
+    for (const [type, arr] of coordinates.entries()) {
+        const shipName = Object.keys(ships)[type];
+        const shipLength = ships[shipName];
+        
+        // #4 - Validate length of ship
+        if (shipLength != arr.length) return invalid(`${shipName}s are ${shipLength} long, not ${arr.length}`);
+
+        // #5 - Ships can only exist on one axis
+        const [x1, y1] = arr[0];
+        const horizontal = arr.every(([x, y]) => y == y1);
+        const vertical = arr.every(([x, y]) => x == x1);
+        if (horizontal == vertical) return invalid(`The ${shipName} exists on more than one axis`);
+
+        // #6 - The coordinates of the ship must be continuous
+        const [xn, yn] = arr[shipLength - 1];
+        if (horizontal) {
+            if (xn - x1 + 1 != shipLength) return invalid(`The ${shipName} is not continuous`);
+        } else {
+            if (yn - y1 + 1 != shipLength) return invalid(`The ${shipName} is not continuous`);
+        }
+    }
+
+    game.boards[req.user.id] = data;
+    if (game.boards[0] && game.boards[1]) game.mode = Math.random() > 0.5 ? Game.modes.PLAYER0 : Game.modes.PLAYER1;
+    res.sendStatus(201);
+});
 api.get('/info', (req, res) => {
     res.send(`User ID is: ${req.user.id}; Game ID: ${req.user.game}`);
 });
