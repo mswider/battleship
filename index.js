@@ -123,6 +123,7 @@ class Game {
     mode;
     boards;
     shots;  // shots that each player took
+    messageQueue;
 
     constructor(gameID) {
         this.id = gameID;
@@ -134,7 +135,8 @@ class Game {
         this.mode = Game.modes.WAIT;
 
         this.boards = [...[,,]];
-        this.shots = [...[,,]].map(_ => [...Array(10)].map(_ => [...Array(10)]));
+        this.shots = [[], []];  // Shot: [ [x, y], hit ]
+        this.messageQueue = [[], []];   // string[] (FIFO)
 
         log(`new game with id ${gameID}`);
     }
@@ -151,7 +153,8 @@ class Game {
         LAYOUT:     2,
         PLAYER0:    3,
         PLAYER1:    4,
-        END:        5
+        WIN0:       5,
+        WIN1:       6
     }
     static generateID(length) {
         return [...Array(length)].map(_ => Math.random() * 10 | 0).join('');
@@ -217,11 +220,25 @@ app.use('/api/:id', (req, res, next) => {
 api.get('/state', (req, res) => {
     const game = games.get(req.user.game);
     game.ping();
+
+    const getPlayState = activeID => {
+        return {
+            mode: 'PLAY',
+            shots: game.shots[activeID],
+            isMyTurn: req.user.id == activeID,
+            ...(game.messageQueue[req.user.id].length > 0 && { message: game.messageQueue[req.user.id].shift() })
+        };
+    };
+
     switch (game.mode) {
         case Game.modes.WAIT:
             return res.json({ mode: 'WAIT' });
         case Game.modes.LAYOUT:
             return res.json({ mode: 'LAYOUT', hasPlacedShips: !!game.boards[req.user.id] });
+        case Game.modes.PLAYER0:
+            return res.json(getPlayState(0));
+        case Game.modes.PLAYER1:
+            return res.json(getPlayState(1));
         default:
             return res.status(500).send('Error processing game state: mode not handled');
     }
