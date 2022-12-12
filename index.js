@@ -239,6 +239,10 @@ api.get('/state', (req, res) => {
             return res.json(getPlayState(0));
         case Game.modes.PLAYER1:
             return res.json(getPlayState(1));
+        case Game.modes.WIN0:
+            return res.json({ mode: req.user.id ? 'DEFEAT' : 'VICTORY' });
+        case Game.modes.WIN1:
+            return res.json({ mode: req.user.id ? 'VICTORY' : 'DEFEAT' });
         default:
             return res.status(500).send('Error processing game state: mode not handled');
     }
@@ -293,6 +297,47 @@ api.post('/ships', (req, res) => {
 
     game.boards[req.user.id] = data;
     if (game.boards[0] && game.boards[1]) game.mode = Math.random() > 0.5 ? Game.modes.PLAYER0 : Game.modes.PLAYER1;
+    res.sendStatus(201);
+});
+api.post('/shot/:x-:y', (req, res) => {
+    const { x, y } = req.params;
+    const game = games.get(req.user.game);
+    game.ping();
+    const getShotForID = (x, y, id) => game.shots[id].find(([[X, Y]]) => x == X && y == Y);
+    if (game.mode != (req.user.id ? Game.modes.PLAYER1 : Game.modes.PLAYER0)) return res.status(400).send('You cannot place a shot right now');
+    if (!(/^\d$/.test(x) && /^\d$/.test(y))) return res.status(400).send('Position invalid. Must be two ints 0-9');
+    if (getShotForID(x, y, req.user.id)) return res.status(400).send('Position invalid. You already shot there');
+
+    const getRemaining = player => {
+        let counts = [...Array(Object.keys(ships).length)].fill(0);
+        for (const [Y, arr] of game.boards[player].entries()) {
+            for (const [X, type] of arr.entries()) {
+                if (type == 0) continue;
+                if (getShotForID(X, Y, player)) continue;
+                counts[type - 1]++;
+            }
+        }
+        return counts;
+    };
+    const opponent = req.user.id ^ 1;
+    const hitType = game.boards[opponent][y][x];
+    game.shots[req.user.id].push([[parseInt(x), parseInt(y)], hitType != 0]);
+    if (hitType == 0) {
+        game.messageQueue[req.user.id].push('MISS');
+    } else {
+        const remainingOfType = getRemaining(opponent);
+        const gameOver = remainingOfType.every(e => e == 0);
+
+        if (gameOver) {
+            game.mode = req.user.id ? Game.modes.WIN1 : Game.modes.WIN0;
+            return res.sendStatus(201);
+        } else {
+            const sunk = remainingOfType[hitType - 1] == 0;
+            game.messageQueue[req.user.id].push('HIT');
+            game.messageQueue[opponent].push(`Your opponent ${sunk ? 'sunk' : 'hit'} your ${Object.keys(ships)[hitType - 1]}!`);
+        }
+    }
+    game.mode = req.user.id ? Game.modes.PLAYER0 : Game.modes.PLAYER1;
     res.sendStatus(201);
 });
 api.get('/info', (req, res) => {
