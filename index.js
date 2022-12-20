@@ -313,7 +313,7 @@ api.post('/shot/:x-:y', (req, res) => {
         for (const [Y, arr] of game.boards[player].entries()) {
             for (const [X, type] of arr.entries()) {
                 if (type == 0) continue;
-                if (getShotForID(X, Y, player)) continue;
+                if (getShotForID(X, Y, player ^ 1)) continue;
                 counts[type - 1]++;
             }
         }
@@ -333,7 +333,7 @@ api.post('/shot/:x-:y', (req, res) => {
             return res.sendStatus(201);
         } else {
             const sunk = remainingOfType[hitType - 1] == 0;
-            game.messageQueue[req.user.id].push('HIT');
+            game.messageQueue[req.user.id].push(sunk ? `SINK (${Object.keys(ships)[hitType - 1]})` : 'HIT');
             game.messageQueue[opponent].push(`Your opponent ${sunk ? 'sunk' : 'hit'} your ${Object.keys(ships)[hitType - 1]}!`);
         }
     }
